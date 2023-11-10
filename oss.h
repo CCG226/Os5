@@ -12,16 +12,14 @@ struct PCB {
 	pid_t pid; //worker process id
 	int startSeconds;//second launched
 	int startNano; //nanosecond launched
-	int serviceTimeSeconds;//time process ran seconds
-	int serviceTimeNano;//time process ran  nanoseconds
-	int eventWaitSec;//time to wait for event in sec
-	int eventWaitNano;//time to wait for event in nano
+	int lastResourceClaim;
 };
 //message data sent through message queue
 typedef struct msgbuffer {
 long mtype;
-int timeslice; //time process gets to run
-double eventWaitTime; // time a process must wait in blocked queue if it needs to access external resource
+int resourceID; 
+int action;
+int workerID;
 } msgbuffer;
 
 
@@ -62,7 +60,7 @@ int LogMessage(FILE* logger, const char* format,...);
 // await to see if a worker is done
 //return 0 if no workers done
 //returns id of worker done if a worker is done
-int AwaitWorker(pid_t worker_Id);
+int AwaitWorker();
 
 //launches worker processes
 //amount launched at once is based on simLimit, adds workers id and state to ready as well as start clock time to process table post launch, 
@@ -81,8 +79,8 @@ int GetWorkerIndexFromProcessTable(struct PCB table[], pid_t workerId);
 void PrintProcessTable(struct PCB processTable[],int curTimeSeconds, int curTimeNanoseconds);
 //constructor for process table
 void BuildProcessTable(struct PCB table[]);
-//returns 1 if 1/2 second has passed, else it return 0
-int HasHalfSecPassed(int currentSec, int currentNano, int halfSecMark, int halfNanoMark);
+
+int CanEvent(int curSec,int curNano,int eventSecMark,int eventNanoMark);
 
 //creates message queue and returns message queues id
 int ConstructMsgQueue();
@@ -91,11 +89,9 @@ void DestructMsgQueue(int msqid);
 //sends request to specific worker using workers pid via message queue
 //the request contains information about the workers timeslice, how much time it gets to run on cpu
 //recieves a response containing the amount of time it got to run on the cpu and if it was blocked how much time it must wait for an event
-msgbuffer SendAndRecieveScheduleMsg(int msqid);
+msgbuffer RequestHandler(int msqid);
 
 
-//determunes if time interval has passed (time interval -t) , if it has we might be able to launch another worker
-int CanLaunchWorker(int currentSecond,int currentNano,int LaunchTimeSec,int LaunchTimeNano);
 //calculates the time to a particular event by taking in current clock time as well as how long until a event occurs, and two values passed by ref pointers (eventSec/eventNano) that store the time when the next event occurs.
 //this method is used to calculate when a workers event time will finish, when a 1/2 second passes to print table, and if time interval t time has passed and wer can launch a new worker
 void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,int timeIntervalSec, int* eventSec, int* eventNano);

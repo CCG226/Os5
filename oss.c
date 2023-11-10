@@ -30,7 +30,7 @@ void Begin_OS_LifeCycle()
 	//set alarm to trigger a method to kill are program after 3 seconds via signal
 	signal(SIGALRM, End_OS_LifeCycle);
 
-	alarm(3);
+	alarm(10);
 
 }
 
@@ -109,26 +109,23 @@ void DestructMsgQueue(int msqid)
 		exit(1);
 	}
 }
-msgbuffer SendAndRecieveScheduleMsg(int msqid) 
+msgbuffer RequestHandler(int msqid) 
 {
 	msgbuffer msg;
-	
-	msg.timeslice = SCHEDULE_TIME;
-	msg.eventWaitTime = 0;	
+		
+       ssize_t haveMsg = msgrcv(msqid, &msg, sizeof(msgbuffer), 0, IPC_NOWAIT);
+
+	if(haveMsg != -1)
+	{//check to see if we allocate the claim if claim,
+	       //	if releease check to see if we can sunblock any worker and release 
+	//
+	printf("Success: resourceRequested: %d, Action %d", msg.resourceID, msg.action);
+	msg.mtype = msg.workerID;	
 	if(msgsnd(msqid, &msg, sizeof(msgbuffer)-sizeof(long),0) == -1)
 	{
-		
+		printf("Failed to send message back\n");
 		exit(1);
 	}
-
-	//wait until recieve message from worker comes to us and recieve the amount of time theiy ran for and amount of time the worker will be blocked only if worker needed to access I/O during timeslice
-	if(msgrcv(msqid, &msg, sizeof(msgbuffer), 1, 0) == -1)
-	{
-		printf("Failed To Receive Message From Worker In Oss.\n");
-		fprintf(stderr, "errno: %d\n", errno);
-
-		exit(1);
-
 	}
 	return msg;
 
@@ -283,7 +280,7 @@ int ValidateInput(int workerAmount, int workerSimLimit, int timeInterval, char* 
 
 int WakeUpProcess(struct PCB table[], struct Sys_Time* Clock, FILE* logger)
 {
-	int amountWoken = 0;
+/*	int amountWoken = 0;
 	//wake up workers from block queue if event time passed
 	for(int i = 0; i < TABLE_SIZE;i++)
 	{
@@ -302,7 +299,8 @@ int WakeUpProcess(struct PCB table[], struct Sys_Time* Clock, FILE* logger)
 
 	}
 	//return amount of workers removed from block queue
-	return amountWoken;
+	return amountWoken;*/
+return 0;
 }
 int LogMessage(FILE* logger, const char* format,...)
 {//logging to file
@@ -329,6 +327,7 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* 
 	//get id of message queue after creating it
 	int msqid = ConstructMsgQueue();
 
+	printf("msg: %d\n", msqid);
 	//tracks amount of workers finished
 	int workersComplete = 0;
 
@@ -358,16 +357,16 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* 
 			if(workersInSystem <= workerSimLimit)
 			{	
 				//it timeInterval t has passed
-				if(CanLaunchWorker(OsClock->seconds, OsClock->nanoseconds, timeToLaunchNxtWorkerSec, timeToLaunchNxtWorkerNano) == 1)
+				if(CanEvent(OsClock->seconds, OsClock->nanoseconds, timeToLaunchNxtWorkerSec, timeToLaunchNxtWorkerNano) == 1)
 				{
+					
 					//laucnh new worker
 					WorkerLauncher(1, processTable, OsClock, logger);
 
 					workersLeftToLaunch--;
 
 					workersInSystem++;
-					//run clock as luanching takes time
-					RunSystemClock(OsClock, 500000);
+				
 					//determine nxt time to launch worker
 					GenerateTimeToEvent(OsClock->seconds, OsClock->nanoseconds,timeInterval,0, &timeToLaunchNxtWorkerSec, &timeToLaunchNxtWorkerNano);
 
@@ -377,7 +376,7 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* 
 
 
 		//if 1/2 second passed, print process table
-		if(HasHalfSecPassed(OsClock->seconds,OsClock->nanoseconds, timeToOutputSec, timeToOutputNano) == 1)
+		if(CanEvent(OsClock->seconds,OsClock->nanoseconds, timeToOutputSec, timeToOutputNano) == 1)
 		{
 
 			PrintProcessTable(processTable, OsClock->seconds, OsClock->nanoseconds);
@@ -386,33 +385,39 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* 
 
 
 			//send and recieve message to specific worker. returns amount of time worker ran and possibly amount of time it must be blocked for
-			msgbuffer msg = SendAndRecieveScheduleMsg(msqid);
-		
+		//	msgbuffer msg = SendAndRecieveScheduleMsg(msqid);
+	
+			RequestHandler(msqid);	
+
 
 				//await that worker toterminate and get its pid
-				int WorkerFinishedId = AwaitWorker(0);
-				//another worker is done
+				int workerFinishedId = AwaitWorker();
+			
+				if(workerFinishedId != 0)
+				{
 				workersComplete++;
-				//worker no longer occupied
-				UpdateWorkerStateInProcessTable(processTable, WorkerFinishedId, STATE_TERMINATED);
 				
+				UpdateWorkerStateInProcessTable(processTable, workerFinishedId, STATE_TERMINATED);
+			
 				workersInSystem--;
-		
-	//relesase external resources (message queue and log file) and generate performance report 
+				}		
+				
+				RunSystemClock(OsClock, 500000);
+	}
+
 	Report();
 	DestructMsgQueue(msqid);
 	fclose(logger);
-
-
-	}
 }
-int CanLaunchWorker(int currentSecond,int currentNano,int LaunchTimeSec,int LaunchTimeNano)
-{//sees if timeinterval t has passed and we can laucnh nxt worker
-	if(LaunchTimeSec <= currentSecond && LaunchTimeNano <= currentNano)
-	{
-		return 1;
-	}	 
-	return 0;
+
+int CanEvent(int curSec,int curNano,int eventSecMark,int eventNanoMark)
+{
+if(eventSecMark <= curSec && eventNanoMark <= curNano)
+{
+return 1;
+}
+
+return 0;
 }
 
 void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,int timeIntervalSec, int* eventSec, int* eventNano)
@@ -430,7 +435,7 @@ void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,
 }
 void WorkerLauncher(int amount, struct PCB table[], struct Sys_Time* clock, FILE* logger)
 {
-
+      
 
 	//keep launching workers until limit (is reached
 	//to create workers, first create a new copy process (child)
@@ -441,6 +446,9 @@ void WorkerLauncher(int amount, struct PCB table[], struct Sys_Time* clock, FILE
 
 
 		pid_t newProcess = fork();
+
+	
+
 
 		if(newProcess < 0)
 		{
@@ -462,15 +470,13 @@ void WorkerLauncher(int amount, struct PCB table[], struct Sys_Time* clock, FILE
 	return;
 }
 
-int AwaitWorker(pid_t worker_Id)
+int AwaitWorker()
 {	
 	int pid = 0;
-
-	while(pid == 0)
-	{	
-		int stat = 0;
+	
+	int stat = 0;
 		//nonblocking await to check if any workers are done
-		pid = waitpid(worker_Id, &stat, WNOHANG);
+		pid = waitpid(-1, &stat, WNOHANG);
 
 
 		if(WIFEXITED(stat)) {
@@ -480,19 +486,10 @@ int AwaitWorker(pid_t worker_Id)
 				exit(1);
 			}	
 		}
-	}
+	
 	//return pid of finished worker
 	//pid will equal 0 if no workers done
 	return pid;
-}
-
-int HasHalfSecPassed(int currentSec, int currentNano, int halfSecMark, int halfNanoMark)
-{//return 1, aka true if 1/2 second has passed
-	if(halfSecMark <= currentSec && halfNanoMark <= currentNano)
-	{
-		return 1;
-	}	
-	return 0;
 }
 
 int GetWorkerIndexFromProcessTable(struct PCB table[], pid_t workerId)
@@ -519,7 +516,7 @@ void AddWorkerToProcessTable(struct PCB table[], pid_t workerId, int secondsCrea
 			table[i].pid = workerId;
 			table[i].startSeconds = secondsCreated;
 			table[i].startNano = nanosecondsCreated;
-			table[i].state = STATE_READY;
+			table[i].state = STATE_RUNNING;
 			//break out of loop, prevents assiginged this worker to every empty row
 			break;
 		}
@@ -546,10 +543,7 @@ void BuildProcessTable(struct PCB table[])
 		table[i].state = 0;
 		table[i].startSeconds = 0;
 		table[i].startNano = 0;
-		table[i].serviceTimeSeconds = 0;
-		table[i].serviceTimeNano = 0;
-		table[i].eventWaitSec = 0;
-		table[i].eventWaitNano = 0;
+		table[i].lastResourceClaim = 0;
 	}	
 
 }	
@@ -563,7 +557,7 @@ void PrintProcessTable(struct PCB processTable[],int curTimeSeconds, int curTime
 	printf("  State  PID       StartS      StartN     ServiceS    ServiceN     EventS    EventN\n");
 	for(int i = 0; i < TABLE_SIZE; i++)
 	{
-		printf("%d      %d        %d          %d        %d       %d        %d      %d        %d\n", i, processTable[i].state, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano, processTable[i].serviceTimeSeconds, processTable[i].serviceTimeNano, processTable[i].eventWaitSec, processTable[i].eventWaitNano);
+	//	printf("%d      %d        %d          %d        %d       %d        %d      %d        %d\n", i, processTable[i].state, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano, processTable[i].serviceTimeSeconds, processTable[i].serviceTimeNano, processTable[i].eventWaitSec, processTable[i].eventWaitNano);
 	}
 }
 
