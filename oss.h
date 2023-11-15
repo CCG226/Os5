@@ -23,6 +23,30 @@ int workerID;
 } msgbuffer;
 
 
+const int STATE_BLOCKED = 3;
+//worker state ready
+const int STATE_READY = 2;
+//worker state running
+const int STATE_RUNNING = 1;
+//worker state terminated
+const int STATE_TERMINATED = 0;
+//table size of process table
+const int TABLE_SIZE = 20;
+//time statics 
+const int HALF_SEC = 500000000;
+
+const int MAX_NANOSECOND = 1000000000;
+
+const int SCHEDULE_TIME = 50000000;
+
+int RES_AMOUNT = 10;
+int RES_INSTANCES = 20;
+//shrd memory and msg queue keys
+
+const int MSG_SYSTEM_KEY = 5303;
+
+const int SYS_TIME_SHARED_MEMORY_KEY = 63131;
+
 //help information
 void Help();
 
@@ -99,26 +123,18 @@ void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,
 //returns amount of workers woken up from blocked queue
 int WakeUpProcess(struct PCB table[], struct Sys_Time* Clock, FILE* logger);
 
+void BuildResourceDescriptor(int resourceDesc[]);
+
+void BuildAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT]);
+
+int UpdateResourceDescriptor(int resourceDesc[], int resourceId);
+
+void UpdateAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT], int resourceId, int workerIndex);
+
+void UpdateLastResourceRequest(int workerId, int resourceId, struct PCB table[]);
+
+void GetReleasedResources(int resourceDesc[], int allocTable[TABLE_SIZE][RES_AMOUNT], int workerIndex);
 
 void Report();
 
-const int STATE_BLOCKED = 3;
-//worker state ready
-const int STATE_READY = 2;
-//worker state running
-const int STATE_RUNNING = 1;
-//worker state terminated
-const int STATE_TERMINATED = 0;
-//table size of process table
-const int TABLE_SIZE = 20;
-//time statics 
-const int HALF_SEC = 500000000;
 
-const int MAX_NANOSECOND = 1000000000;
-
-const int SCHEDULE_TIME = 50000000;
-//shrd memory and msg queue keys
-
-const int MSG_SYSTEM_KEY = 5303;
-
-const int SYS_TIME_SHARED_MEMORY_KEY = 63131;

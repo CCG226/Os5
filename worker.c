@@ -93,20 +93,26 @@ void TaskHandler(int workerResources[])
 	if(CanEvent(Clock->seconds, Clock->nanoseconds, requestEventSec, requestEventNano) == 1)
 	{
 		
-		int choice = ClaimOrReleaseResource();
+		int choice = 1;
+	
 		int resourceId = 0;
-		
+		//if worker does not have all the resources
+		if(AllResourcesClaimed(workerResources) != 1)
+		{
+		 choice = ClaimOrReleaseResource();
+		}
+
 		if(choice == 0)
 		{
 		//claim
-		resourceId = ClaimResource();
+		resourceId = ClaimResource(workerResources);
 		}
 		else{
 		//release
 		resourceId = ReleaseResource(workerResources);
 		if(resourceId == -1)
-		{
-		resourceId = ClaimResource();
+		{//no resources to release so must claim
+		resourceId = ClaimResource(workerResources);
 		}
 
 		}
@@ -125,7 +131,13 @@ void TaskHandler(int workerResources[])
 		timeUntilNxtRequest = GenerateRequestTime();	
 
 		GenerateTimeToEvent(Clock->seconds, Clock->nanoseconds, timeUntilNxtRequest,0, &requestEventSec, &requestEventNano);
-
+		if(choice == 0){
+		for(int i = 0; i < RES_AMOUNT;i++)
+		{
+	//	printf("pid %d requestedRes %d timeTillNxtRq %d  ",getpid(), workerResources[i], timeUntilNxtRequest);
+		}
+	//	printf("\n");
+		}
 	}	
 
          if(CanEvent(Clock->seconds, Clock->nanoseconds, qtrSec, qtrNano) == 1)
@@ -143,9 +155,43 @@ void TaskHandler(int workerResources[])
 	DisposeAccessToShm(Clock);
 
 }
-int ClaimResource()
+int AllResourcesClaimed(int resourceArray[])
 {
-return (rand() % 10); 
+int count = 0;
+
+int allFull = 0;
+
+for(int i = 0; i < RES_AMOUNT;i++)
+{
+ if(resourceArray[i] == 20)
+ {
+ count++;
+ }
+}
+
+if(count == RES_AMOUNT)
+{
+allFull = 1;
+
+}
+
+return allFull;
+
+}
+int ClaimResource(int resourceArray[])
+{
+int foundResource = 0;	
+int res = -1;
+while(foundResource == 0)
+{
+res = (rand() % 10); 
+if(resourceArray[res] < 20)
+{
+foundResource = 1;
+}
+}
+
+return res;
 }
 int ReleaseResource(int resourceArray[])
 {
@@ -227,9 +273,10 @@ void SendRequest(int msqid, msgbuffer *msg,int resourceId, int requestAction)
 {//send amount of time worker ran and  amount of time worker wait to access external resource (if it doesnt, eventWaitTime = 0)
 	msg->resourceID = resourceId;
 	msg->action = requestAction;
+	msg->mtype = 1;
 	msg->workerID = getpid();
 	//send message back to os
-	if(msgsnd(msqid, msg, sizeof(msgbuffer)-sizeof(long), 0) == -1) {
+	if(msgsnd(msqid, msg, sizeof(msgbuffer)-sizeof(long),0) == -1) {
 		perror("Failed To Generate Response Message Back To Os.\n");
 		exit(1);
 	}

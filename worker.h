@@ -41,11 +41,11 @@ int ShouldTerminate();
 
 void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,int timeIntervalSec, int* eventSec, int* eventNano);
 
-int ClaimResource();
+int ClaimResource(int resourceArray[]);
 int ReleaseResource(int resourceArray[]);
 void AppendResource(int resourceArray[], int id);
 int GenerateRequestTime();
-
+int AllResourcesClaimed(int resourceArray[]);
 int ClaimOrReleaseResource();
 
 //if worker is in operation

@@ -113,7 +113,7 @@ msgbuffer RequestHandler(int msqid)
 {
 	msgbuffer msg;
 		
-       ssize_t haveMsg = msgrcv(msqid, &msg, sizeof(msgbuffer), 0, IPC_NOWAIT);
+       ssize_t haveMsg = msgrcv(msqid, &msg, sizeof(msgbuffer), 1, IPC_NOWAIT);
 
 	if(haveMsg != -1)
 	{//check to see if we allocate the claim if claim,
@@ -278,6 +278,53 @@ int ValidateInput(int workerAmount, int workerSimLimit, int timeInterval, char* 
 
 }
 
+void BuildResourceDescriptor(int resourceDesc[])
+{
+for(int i = 0; i < RES_AMOUNT;i++)
+{
+ resourceDesc[i] = RES_INSTANCES;
+}	
+}
+void BuildAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT])
+{
+for(int i = 0; i < TABLE_SIZE;i++)
+{
+for(int j = 0; i < RES_AMOUNT;j++)
+{
+allocTable[i][j] = 0;
+}
+
+}
+}
+int UpdateResourceDescriptor(int resourceDesc[], int resourceId)
+{
+if(resourceDesc[resourceId] >= RES_INSTANCES)
+{
+return 0;
+}
+resourceDesc[resourceId] = resourceDesc[resourceId] + 1;
+return 1;
+}
+void UpdateAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT], int resourceId, int workerIndex)
+{
+	
+ allocTable[workerIndex][resourceId] =  allocTable[workerIndex][resourceId] + 1;
+}
+void UpdateLastResourceRequest(int workerId, int resourceId, struct PCB table[])
+{
+table[workerId].lastResourceClaim = resourceId;
+}
+void GetReleasedResources(int resourceDesc[],int allocTable[TABLE_SIZE][RES_AMOUNT], int workerIndex){
+  for(int j = 0; j < RES_AMOUNT;j++)
+  {
+   if(allocTable[workerIndex][j] > 0)
+   {
+	resourceDesc[j] += allocTable[workerIndex][j];
+	allocTable[workerIndex][j] = 0;	
+   }
+  
+  }
+}
 int WakeUpProcess(struct PCB table[], struct Sys_Time* Clock, FILE* logger)
 {
 /*	int amountWoken = 0;
@@ -554,10 +601,10 @@ void PrintProcessTable(struct PCB processTable[],int curTimeSeconds, int curTime
 	int os_id = getpid();	
 	printf("\nOSS PID:%d SysClockS: %d SysclockNano: %d\n",os_id, curTimeSeconds, curTimeNanoseconds);
 	printf("Process Table:\n");
-	printf("  State  PID       StartS      StartN     ServiceS    ServiceN     EventS    EventN\n");
+	printf("      State      PID       StartS       StartN         ResourceReq\n");
 	for(int i = 0; i < TABLE_SIZE; i++)
 	{
-	//	printf("%d      %d        %d          %d        %d       %d        %d      %d        %d\n", i, processTable[i].state, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano, processTable[i].serviceTimeSeconds, processTable[i].serviceTimeNano, processTable[i].eventWaitSec, processTable[i].eventWaitNano);
+	printf("%d        %d          %d          %d         %d         %d \n", i, processTable[i].state, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano, processTable[i].lastResourceClaim);
 	}
 }
 
