@@ -93,16 +93,16 @@ void TaskHandler(int workerResources[])
 	if(CanEvent(Clock->seconds, Clock->nanoseconds, requestEventSec, requestEventNano) == 1)
 	{
 		
-		int choice = 1;
+		int action = 1;
 	
 		int resourceId = 0;
 		//if worker does not have all the resources
 		if(AllResourcesClaimed(workerResources) != 1)
 		{
-		 choice = ClaimOrReleaseResource();
+		 action = ClaimOrReleaseResource();
 		}
 
-		if(choice == 0)
+		if(action == 0)
 		{
 		//claim
 		resourceId = ClaimResource(workerResources);
@@ -112,17 +112,20 @@ void TaskHandler(int workerResources[])
 		resourceId = ReleaseResource(workerResources);
 		if(resourceId == -1)
 		{//no resources to release so must claim
-		resourceId = ClaimResource(workerResources);
-		}
-
-		}
-
-		SendRequest(msqid,&msg, resourceId, choice);
-
-		if(choice == 0)
-		{
 		
-		int newResource = GetResourceResponse(msqid, &msg);
+		resourceId = ClaimResource(workerResources);
+		action = 0;
+		}
+
+		}
+
+		SendRequest(msqid,&msg, resourceId, action);
+
+                int newResource = GetResourceResponse(msqid, &msg);
+ 
+
+		if(action == 0)
+		{
 
 		AppendResource(workerResources, newResource);
 
@@ -131,13 +134,12 @@ void TaskHandler(int workerResources[])
 		timeUntilNxtRequest = GenerateRequestTime();	
 
 		GenerateTimeToEvent(Clock->seconds, Clock->nanoseconds, timeUntilNxtRequest,0, &requestEventSec, &requestEventNano);
-		if(choice == 0){
+		printf("This worker %d's resources are now after action %d: ",getpid(), action);
 		for(int i = 0; i < RES_AMOUNT;i++)
 		{
-	//	printf("pid %d requestedRes %d timeTillNxtRq %d  ",getpid(), workerResources[i], timeUntilNxtRequest);
+		printf("R%d: %d ", i, workerResources[i]);
 		}
-	//	printf("\n");
-		}
+		printf("\n");
 	}	
 
          if(CanEvent(Clock->seconds, Clock->nanoseconds, qtrSec, qtrNano) == 1)
@@ -146,7 +148,7 @@ void TaskHandler(int workerResources[])
    		
 	   if(ShouldTerminate() == 1)
 	   {
-	  printf("worker %d is termingating\n", getpid());	   
+	  printf("worker %d is terminating\n", getpid());	   
 	     status = TERMINATING;	   
 	   }	   
 	 }	 
@@ -275,6 +277,7 @@ void SendRequest(int msqid, msgbuffer *msg,int resourceId, int requestAction)
 	msg->action = requestAction;
 	msg->mtype = 1;
 	msg->workerID = getpid();
+printf("SENDING worker %d, resource %d, action %d", msg->workerID, msg->resourceID, requestAction);	
 	//send message back to os
 	if(msgsnd(msqid, msg, sizeof(msgbuffer)-sizeof(long),0) == -1) {
 		perror("Failed To Generate Response Message Back To Os.\n");

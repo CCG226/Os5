@@ -76,8 +76,7 @@ void RunSystemClock(struct Sys_Time *Clock, int incRate);
 //updates process table info
 //handles response messages from workers after they run
 //workAmount = n value, workerSimLimit = -s value, timeInterval = -t value, logFile = -f value, OsClock = shared memory clock, table is process pcb table 
-void WorkerHandler(int workerAmount, int workerSimLimit, int timeInterval,char* logFile, struct Sys_Time* OsClock, struct PCB table[]);
-
+void WorkerHandler(int workerAmount, int workerSimLimit, int timeInterval,char* logFile, struct Sys_Time* OsClock, struct PCB table[], int resourceDescriptor[], int allocationTable[TABLE_SIZE][RES_AMOUNT]);
 //logs a particular message to logfile 
 int LogMessage(FILE* logger, const char* format,...);
 
@@ -85,6 +84,8 @@ int LogMessage(FILE* logger, const char* format,...);
 //return 0 if no workers done
 //returns id of worker done if a worker is done
 int AwaitWorker();
+
+void UpdateWorkerStateInProcessTable(struct PCB table[], pid_t workerId, int state);
 
 //launches worker processes
 //amount launched at once is based on simLimit, adds workers id and state to ready as well as start clock time to process table post launch, 
@@ -96,7 +97,6 @@ void End_OS_LifeCycle();
 //adds worker data to process table  after worker is launched including its pid and time it was launchhed and the fact that is state is ready so its ready queue
 void AddWorkerToProcessTable(struct PCB table[], pid_t workerId, int secondsCreated, int nanosecondsCreated);
 //updates state of a worker
-void UpdateWorkerStateInProcessTable(struct PCB table[], pid_t workerId, int state);
 //gets the index value of a particular woker from the process table using workers pid
 int GetWorkerIndexFromProcessTable(struct PCB table[], pid_t workerId);
 //prints process table
@@ -123,15 +123,21 @@ void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,
 //returns amount of workers woken up from blocked queue
 int WakeUpProcess(struct PCB table[], struct Sys_Time* Clock, FILE* logger);
 
+void PrintAllocationTable(struct PCB processTable[], int allocationTable[TABLE_SIZE][RES_AMOUNT]);
+void PrintResourceAvailability(int resourceDescriptor[]);
 void BuildResourceDescriptor(int resourceDesc[]);
 
 void BuildAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT]);
 
-int UpdateResourceDescriptor(int resourceDesc[], int resourceId);
+int DidWorkerSendRequest(struct PCB table[], int workerId);
 
-void UpdateAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT], int resourceId, int workerIndex);
+int CanGrantResourceClaim(int resourceDesc[], int resourceId);
 
-void UpdateLastResourceRequest(int workerId, int resourceId, struct PCB table[]);
+void UpdateResourceDescriptor(int resourceDesc[], int resourceId, int action);
+
+void UpdateAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT], int resourceId, int workerIndex, int action);
+
+void UpdateLastResourceRequest(int workerIndex, int resourceId, struct PCB table[]);
 
 void GetReleasedResources(int resourceDesc[], int allocTable[TABLE_SIZE][RES_AMOUNT], int workerIndex);
 

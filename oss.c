@@ -54,8 +54,17 @@ int main(int argc, char** argv)
 	//set 3 second timer	
 	Begin_OS_LifeCycle();
 
+	int resourceDescriptor[RES_AMOUNT];
+
+	BuildResourceDescriptor(resourceDescriptor);
+
+
+	int allocationTable[TABLE_SIZE][RES_AMOUNT];
+
+	BuildAllocationTable(allocationTable);
+
 	//process table
-	struct PCB processTable[20];
+	struct PCB processTable[TABLE_SIZE];
 
 	//assigns default values to processtable elements (constructor)
 	BuildProcessTable(processTable);
@@ -80,7 +89,7 @@ int main(int argc, char** argv)
 	shm_ClockId = StartSystemClock(&OS_Clock);
 
 	//handles how os laumches, tracks, and times workers
-	WorkerHandler(workerAmount, simultaneousLimit, timeInterval,logFileName, OS_Clock, processTable);
+	WorkerHandler(workerAmount, simultaneousLimit, timeInterval,logFileName, OS_Clock, processTable,resourceDescriptor, allocationTable );
 
 	//removes system clock from shared mem
 	StopSystemClock(OS_Clock ,shm_ClockId);
@@ -112,20 +121,20 @@ void DestructMsgQueue(int msqid)
 msgbuffer RequestHandler(int msqid) 
 {
 	msgbuffer msg;
-		
-       ssize_t haveMsg = msgrcv(msqid, &msg, sizeof(msgbuffer), 1, IPC_NOWAIT);
+
+	ssize_t haveMsg = msgrcv(msqid, &msg, sizeof(msgbuffer), 1, IPC_NOWAIT);
 
 	if(haveMsg != -1)
 	{//check to see if we allocate the claim if claim,
-	       //	if releease check to see if we can sunblock any worker and release 
-	//
-	printf("Success: resourceRequested: %d, Action %d", msg.resourceID, msg.action);
-	msg.mtype = msg.workerID;	
-	if(msgsnd(msqid, &msg, sizeof(msgbuffer)-sizeof(long),0) == -1)
-	{
-		printf("Failed to send message back\n");
-		exit(1);
-	}
+		//	if releease check to see if we can sunblock any worker and release 
+		//
+
+		msg.mtype = msg.workerID;	
+		if(msgsnd(msqid, &msg, sizeof(msgbuffer)-sizeof(long),0) == -1)
+		{
+			printf("Failed to send message back\n");
+			exit(1);
+		}
 	}
 	return msg;
 
@@ -280,74 +289,135 @@ int ValidateInput(int workerAmount, int workerSimLimit, int timeInterval, char* 
 
 void BuildResourceDescriptor(int resourceDesc[])
 {
-for(int i = 0; i < RES_AMOUNT;i++)
-{
- resourceDesc[i] = RES_INSTANCES;
-}	
+	for(int i = 0; i < RES_AMOUNT;i++)
+	{
+		resourceDesc[i] = RES_INSTANCES;
+	}	
 }
 void BuildAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT])
 {
-for(int i = 0; i < TABLE_SIZE;i++)
-{
-for(int j = 0; i < RES_AMOUNT;j++)
-{
-allocTable[i][j] = 0;
+	for(int i = 0; i < TABLE_SIZE;i++)
+	{
+		for(int j = 0; j < RES_AMOUNT;j++)
+		{
+			allocTable[i][j] = 0;
+		}
+
+	}
 }
+void PrintAllocationTable(struct PCB processTable[],int allocationTable[TABLE_SIZE][RES_AMOUNT])
+{
+	printf("Allocation Table: \n");	
+	for(int i = 0;i < TABLE_SIZE;i++)
+	{
+		if(processTable[i].pid != 0)
+		{	
+			printf("Worker Id: %d Resources: ", processTable[i].pid);
+			for(int j = 0; j < RES_AMOUNT;j++)
+			{	
+				printf("R%d: %d ",j, allocationTable[i][j]);
+
+			}
+			printf("\n");
+
+		}
+	}
 
 }
-}
-int UpdateResourceDescriptor(int resourceDesc[], int resourceId)
+void PrintResourceAvailability(int resourceDescriptor[])
 {
-if(resourceDesc[resourceId] >= RES_INSTANCES)
+	printf("Available Resources: \n");
+	for(int i = 0; i < RES_AMOUNT;i++)
+	{
+		printf("R%d: %d ", i, resourceDescriptor[i]);
+	}
+	printf("\n");
+}
+int DidWorkerSendRequest(struct PCB table[], int workerId)
+{
+for(int i = 0; i < TABLE_SIZE;i++)
+{
+if(table[i].pid == workerId && workerId != 0)
+{
+return 1;
+}
+}
+return 0;
+}	
+int CanGrantResourceClaim(int resourceDesc[], int resourceId)
+{
+if(resourceDesc[resourceId] <= 0)
 {
 return 0;
 }
-resourceDesc[resourceId] = resourceDesc[resourceId] + 1;
 return 1;
 }
-void UpdateAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT], int resourceId, int workerIndex)
+
+void UpdateResourceDescriptor(int resourceDesc[], int resourceId, int action)
 {
-	
- allocTable[workerIndex][resourceId] =  allocTable[workerIndex][resourceId] + 1;
+
+	printf("Available Event: action: %d,  resource Id: %d\n",action, resourceId);
+
+	if(action == 0)
+	{
+	resourceDesc[resourceId] = resourceDesc[resourceId] - 1;
+	}
+	if(action == 1)
+	{
+	resourceDesc[resourceId] = resourceDesc[resourceId] + 1;
+	}
 }
-void UpdateLastResourceRequest(int workerId, int resourceId, struct PCB table[])
+void UpdateAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT], int resourceId, int workerIndex, int action)
 {
-table[workerId].lastResourceClaim = resourceId;
+	printf("ALLOC: action: %d, worker: %d, resource Id: %d\n",action, workerIndex, resourceId);
+	if(action == 0)
+	{
+	allocTable[workerIndex][resourceId] =  allocTable[workerIndex][resourceId] + 1;
+	}
+	if(action == 1)
+	{
+	allocTable[workerIndex][resourceId] = allocTable[workerIndex][resourceId] - 1;
+	}	
+	
+}
+void UpdateLastResourceRequest(int workerIndex, int resourceId, struct PCB table[])
+{
+	table[workerIndex].lastResourceClaim = resourceId;
 }
 void GetReleasedResources(int resourceDesc[],int allocTable[TABLE_SIZE][RES_AMOUNT], int workerIndex){
-  for(int j = 0; j < RES_AMOUNT;j++)
-  {
-   if(allocTable[workerIndex][j] > 0)
-   {
-	resourceDesc[j] += allocTable[workerIndex][j];
-	allocTable[workerIndex][j] = 0;	
-   }
-  
-  }
+	for(int j = 0; j < RES_AMOUNT;j++)
+	{
+		if(allocTable[workerIndex][j] > 0)
+		{
+			resourceDesc[j] += allocTable[workerIndex][j];
+			allocTable[workerIndex][j] = 0;	
+		}
+
+	}
 }
 int WakeUpProcess(struct PCB table[], struct Sys_Time* Clock, FILE* logger)
 {
-/*	int amountWoken = 0;
+	/*	int amountWoken = 0;
 	//wake up workers from block queue if event time passed
 	for(int i = 0; i < TABLE_SIZE;i++)
 	{
-		if(table[i].state == STATE_BLOCKED)
-		{
-			if(table[i].eventWaitSec <= Clock->seconds && table[i].eventWaitNano <= Clock->nanoseconds)
-			{
-				amountWoken++;	
-				table[i].state = STATE_READY;
-				table[i].eventWaitNano = 0;
-				table[i].eventWaitSec = 0;
-				LogMessage(logger, "OSS: Unblocked Worker %d at time %d:%d. Worker now back to ready queue.\n",table[i].pid, Clock->seconds, Clock->nanoseconds); 
-			}
+	if(table[i].state == STATE_BLOCKED)
+	{
+	if(table[i].eventWaitSec <= Clock->seconds && table[i].eventWaitNano <= Clock->nanoseconds)
+	{
+	amountWoken++;	
+	table[i].state = STATE_READY;
+	table[i].eventWaitNano = 0;
+	table[i].eventWaitSec = 0;
+	LogMessage(logger, "OSS: Unblocked Worker %d at time %d:%d. Worker now back to ready queue.\n",table[i].pid, Clock->seconds, Clock->nanoseconds); 
+	}
 
-		}
+	}
 
 	}
 	//return amount of workers removed from block queue
 	return amountWoken;*/
-return 0;
+	return 0;
 }
 int LogMessage(FILE* logger, const char* format,...)
 {//logging to file
@@ -368,7 +438,7 @@ int LogMessage(FILE* logger, const char* format,...)
 
 	return 0;
 }
-void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* logFile, struct Sys_Time* OsClock, struct PCB processTable[])
+void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* logFile, struct Sys_Time* OsClock, struct PCB processTable[], int resourceDescriptor[], int allocationTable[TABLE_SIZE][RES_AMOUNT])
 {	//access logfile
 	FILE *logger = fopen(logFile, "w");
 	//get id of message queue after creating it
@@ -406,14 +476,14 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* 
 				//it timeInterval t has passed
 				if(CanEvent(OsClock->seconds, OsClock->nanoseconds, timeToLaunchNxtWorkerSec, timeToLaunchNxtWorkerNano) == 1)
 				{
-					
+
 					//laucnh new worker
 					WorkerLauncher(1, processTable, OsClock, logger);
 
 					workersLeftToLaunch--;
 
 					workersInSystem++;
-				
+
 					//determine nxt time to launch worker
 					GenerateTimeToEvent(OsClock->seconds, OsClock->nanoseconds,timeInterval,0, &timeToLaunchNxtWorkerSec, &timeToLaunchNxtWorkerNano);
 
@@ -426,30 +496,62 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* 
 		if(CanEvent(OsClock->seconds,OsClock->nanoseconds, timeToOutputSec, timeToOutputNano) == 1)
 		{
 
+		//	PrintAllocationTable(processTable,allocationTable);
+		//	PrintResourceAvailability(resourceDescriptor);
 			PrintProcessTable(processTable, OsClock->seconds, OsClock->nanoseconds);
 			GenerateTimeToEvent(OsClock->seconds, OsClock->nanoseconds,HALF_SEC,0, &timeToOutputSec, &timeToOutputNano);
 		}
 
 
-			//send and recieve message to specific worker. returns amount of time worker ran and possibly amount of time it must be blocked for
-		//	msgbuffer msg = SendAndRecieveScheduleMsg(msqid);
-	
-			RequestHandler(msqid);	
+		//send and recieve message to specific worker. returns amount of time worker ran and possibly amount of time it must be blocked for
+		msgbuffer msg =	RequestHandler(msqid);	
+		if(DidWorkerSendRequest(processTable, msg.workerID) == 1)
+		{
+		int canCommitAction = 1;
 
+		if(msg.action == 0)
+		{//if worker claims resource
 
+			UpdateLastResourceRequest(GetWorkerIndexFromProcessTable(processTable, msg.workerID), msg.resourceID,processTable);
+			//if the resource the worker wants is not available then canCommitAction becomes zero and os will not grant claim via update
+			//
+			canCommitAction = CanGrantResourceClaim(resourceDescriptor, msg.resourceID);
+			//
+		}
+		if(canCommitAction == 1)
+		{	
+		UpdateResourceDescriptor(resourceDescriptor, msg.resourceID, msg.action);
+		UpdateAllocationTable(allocationTable, msg.resourceID, GetWorkerIndexFromProcessTable(processTable, msg.workerID), msg.action);
+		}
+		if(canCommitAction == 0)
+		{
+		//block
+		}
+
+			PrintAllocationTable(processTable,allocationTable);
+			PrintResourceAvailability(resourceDescriptor);
+
+		}
 				//await that worker toterminate and get its pid
 				int workerFinishedId = AwaitWorker();
-			
+
 				if(workerFinishedId != 0)
 				{
 				workersComplete++;
-				
+
+				UpdateLastResourceRequest(GetWorkerIndexFromProcessTable(processTable, workerFinishedId), -1, processTable);
+
+
+				GetReleasedResources(resourceDescriptor, allocationTable, GetWorkerIndexFromProcessTable(processTable, workerFinishedId)); 
+
+
 				UpdateWorkerStateInProcessTable(processTable, workerFinishedId, STATE_TERMINATED);
-			
+
 				workersInSystem--;
 				}		
-				
-				RunSystemClock(OsClock, 500000);
+
+
+		RunSystemClock(OsClock, 500000);
 	}
 
 	Report();
@@ -459,12 +561,12 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* 
 
 int CanEvent(int curSec,int curNano,int eventSecMark,int eventNanoMark)
 {
-if(eventSecMark <= curSec && eventNanoMark <= curNano)
-{
-return 1;
-}
+	if(eventSecMark <= curSec && eventNanoMark <= curNano)
+	{
+		return 1;
+	}
 
-return 0;
+	return 0;
 }
 
 void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,int timeIntervalSec, int* eventSec, int* eventNano)
@@ -482,7 +584,7 @@ void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,
 }
 void WorkerLauncher(int amount, struct PCB table[], struct Sys_Time* clock, FILE* logger)
 {
-      
+
 
 	//keep launching workers until limit (is reached
 	//to create workers, first create a new copy process (child)
@@ -494,7 +596,7 @@ void WorkerLauncher(int amount, struct PCB table[], struct Sys_Time* clock, FILE
 
 		pid_t newProcess = fork();
 
-	
+
 
 
 		if(newProcess < 0)
@@ -520,20 +622,20 @@ void WorkerLauncher(int amount, struct PCB table[], struct Sys_Time* clock, FILE
 int AwaitWorker()
 {	
 	int pid = 0;
-	
+
 	int stat = 0;
-		//nonblocking await to check if any workers are done
-		pid = waitpid(-1, &stat, WNOHANG);
+	//nonblocking await to check if any workers are done
+	pid = waitpid(-1, &stat, WNOHANG);
 
 
-		if(WIFEXITED(stat)) {
+	if(WIFEXITED(stat)) {
 
-			if(WEXITSTATUS(stat) != 0)
-			{
-				exit(1);
-			}	
-		}
-	
+		if(WEXITSTATUS(stat) != 0)
+		{
+			exit(1);
+		}	
+	}
+
 	//return pid of finished worker
 	//pid will equal 0 if no workers done
 	return pid;
@@ -552,6 +654,7 @@ int GetWorkerIndexFromProcessTable(struct PCB table[], pid_t workerId)
 	printf("Invalid Worker Id\n");
 	exit(1);
 }
+
 void AddWorkerToProcessTable(struct PCB table[], pid_t workerId, int secondsCreated, int nanosecondsCreated)
 {
 	for(int i = 0; i < TABLE_SIZE; i++)
@@ -604,7 +707,7 @@ void PrintProcessTable(struct PCB processTable[],int curTimeSeconds, int curTime
 	printf("      State      PID       StartS       StartN         ResourceReq\n");
 	for(int i = 0; i < TABLE_SIZE; i++)
 	{
-	printf("%d        %d          %d          %d         %d         %d \n", i, processTable[i].state, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano, processTable[i].lastResourceClaim);
+		printf("%d        %d          %d          %d         %d         %d \n", i, processTable[i].state, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano, processTable[i].lastResourceClaim);
 	}
 }
 
