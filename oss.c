@@ -53,12 +53,12 @@ int main(int argc, char** argv)
 
 	//set 3 second timer	
 	Begin_OS_LifeCycle();
-
+	//avialbality vector
 	int resourceDescriptor[RES_AMOUNT];
 
 	BuildResourceDescriptor(resourceDescriptor);
 
-
+	//allocation table
 	int allocationTable[TABLE_SIZE][RES_AMOUNT];
 
 	BuildAllocationTable(allocationTable);
@@ -118,25 +118,24 @@ void DestructMsgQueue(int msqid)
 		exit(1);
 	}
 }
-msgbuffer RequestHandler(int msqid) 
+int RequestHandler(int msqid, msgbuffer *msg) 
 {
-	msgbuffer msg;
-
-	ssize_t haveMsg = msgrcv(msqid, &msg, sizeof(msgbuffer), 1, IPC_NOWAIT);
-
-	if(haveMsg != -1)
-	{//check to see if we allocate the claim if claim,
-		//	if releease check to see if we can sunblock any worker and release 
-		//
-
-		msg.mtype = msg.workerID;	
-		if(msgsnd(msqid, &msg, sizeof(msgbuffer)-sizeof(long),0) == -1)
-		{
-			printf("Failed to send message back\n");
-			exit(1);
-		}
+	//see if workers sent a message
+	ssize_t result = msgrcv(msqid, msg, sizeof(msgbuffer), 1, IPC_NOWAIT);
+	if(result != -1)
+	{
+		return 1;
 	}
-	return msg;
+	return 0;
+}
+void ResponseHandler(int msqid, int workerId, msgbuffer *msg)
+{//send response back to woker saying we gave them thier claim or accepted their release of a resource
+	msg->mtype = msg->workerID;	
+	if(msgsnd(msqid,msg, sizeof(msgbuffer)-sizeof(long),0) == -1)
+	{
+		printf("Worker terminated without resource response\n");
+		exit(1);
+	}
 
 }
 int StartSystemClock(struct Sys_Time **Clock)
@@ -305,120 +304,159 @@ void BuildAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT])
 
 	}
 }
-void PrintAllocationTable(struct PCB processTable[],int allocationTable[TABLE_SIZE][RES_AMOUNT])
-{
-	printf("Allocation Table: \n");	
-	for(int i = 0;i < TABLE_SIZE;i++)
-	{
-		if(processTable[i].pid != 0)
-		{	
-			printf("Worker Id: %d Resources: ", processTable[i].pid);
-			for(int j = 0; j < RES_AMOUNT;j++)
-			{	
-				printf("R%d: %d ",j, allocationTable[i][j]);
 
-			}
-			printf("\n");
-
-		}
-	}
-
-}
-void PrintResourceAvailability(int resourceDescriptor[])
-{
-	printf("Available Resources: \n");
-	for(int i = 0; i < RES_AMOUNT;i++)
-	{
-		printf("R%d: %d ", i, resourceDescriptor[i]);
-	}
-	printf("\n");
-}
-int DidWorkerSendRequest(struct PCB table[], int workerId)
-{
-for(int i = 0; i < TABLE_SIZE;i++)
-{
-if(table[i].pid == workerId && workerId != 0)
-{
-return 1;
-}
-}
-return 0;
-}	
 int CanGrantResourceClaim(int resourceDesc[], int resourceId)
-{
-if(resourceDesc[resourceId] <= 0)
-{
-return 0;
+{//can we give a worker a resource?
+	if(resourceDesc[resourceId] <= 0)
+	{
+		return 0;
+	}
+	return 1;
 }
-return 1;
-}
-
+//when resource is claimed or release
 void UpdateResourceDescriptor(int resourceDesc[], int resourceId, int action)
-{
-
-	printf("Available Event: action: %d,  resource Id: %d\n",action, resourceId);
+{//availablity vecotr
 
 	if(action == 0)
-	{
-	resourceDesc[resourceId] = resourceDesc[resourceId] - 1;
+	{//claim
+		resourceDesc[resourceId] = resourceDesc[resourceId] - 1;
 	}
 	if(action == 1)
-	{
-	resourceDesc[resourceId] = resourceDesc[resourceId] + 1;
+	{//release
+		resourceDesc[resourceId] = resourceDesc[resourceId] + 1;
 	}
 }
+//when resource is claimed or relesaed
 void UpdateAllocationTable(int allocTable[TABLE_SIZE][RES_AMOUNT], int resourceId, int workerIndex, int action)
 {
-	printf("ALLOC: action: %d, worker: %d, resource Id: %d\n",action, workerIndex, resourceId);
 	if(action == 0)
-	{
-	allocTable[workerIndex][resourceId] =  allocTable[workerIndex][resourceId] + 1;
+	{//claim
+		allocTable[workerIndex][resourceId] =  allocTable[workerIndex][resourceId] + 1;
 	}
 	if(action == 1)
-	{
-	allocTable[workerIndex][resourceId] = allocTable[workerIndex][resourceId] - 1;
+	{//release
+		allocTable[workerIndex][resourceId] = allocTable[workerIndex][resourceId] - 1;
 	}	
-	
+
 }
+//remeber last resource request incase worker is blocked
 void UpdateLastResourceRequest(int workerIndex, int resourceId, struct PCB table[])
 {
 	table[workerIndex].lastResourceClaim = resourceId;
 }
-void GetReleasedResources(int resourceDesc[],int allocTable[TABLE_SIZE][RES_AMOUNT], int workerIndex){
+//get all resources back from terminated worker
+void GetReleasedResources(int resourceDesc[],int allocTable[TABLE_SIZE][RES_AMOUNT], int workerIndex, FILE* logger){
+	LogMessage(logger, "releasing terminated workers resources of ");
 	for(int j = 0; j < RES_AMOUNT;j++)
 	{
 		if(allocTable[workerIndex][j] > 0)
 		{
 			resourceDesc[j] += allocTable[workerIndex][j];
 			allocTable[workerIndex][j] = 0;	
+			LogMessage(logger, "R %d",j);
 		}
 
 	}
+	LogMessage(logger,"\n");
 }
-int WakeUpProcess(struct PCB table[], struct Sys_Time* Clock, FILE* logger)
-{
-	/*	int amountWoken = 0;
-	//wake up workers from block queue if event time passed
+int WakeUpProcess(struct PCB table[], int resourceDescriptor[],int allocTable[TABLE_SIZE][RES_AMOUNT], int msqid)
+{//wake up processes if their resource is available
+	int wokenUp = 0;
+	msgbuffer msg;
 	for(int i = 0; i < TABLE_SIZE;i++)
 	{
-	if(table[i].state == STATE_BLOCKED)
-	{
-	if(table[i].eventWaitSec <= Clock->seconds && table[i].eventWaitNano <= Clock->nanoseconds)
-	{
-	amountWoken++;	
-	table[i].state = STATE_READY;
-	table[i].eventWaitNano = 0;
-	table[i].eventWaitSec = 0;
-	LogMessage(logger, "OSS: Unblocked Worker %d at time %d:%d. Worker now back to ready queue.\n",table[i].pid, Clock->seconds, Clock->nanoseconds); 
-	}
+		if(table[i].state == STATE_BLOCKED)
+		{
+			if(resourceDescriptor[table[i].lastResourceClaim] > 0)
+			{
+				wokenUp++;	 
+
+				ResponseHandler(msqid,table[i].pid, &msg);
+
+				UpdateResourceDescriptor(resourceDescriptor, table[i].lastResourceClaim, 0);
+
+				UpdateAllocationTable(allocTable, table[i].lastResourceClaim, i, 0);
+
+				UpdateWorkerStateInProcessTable(table, table[i].pid, STATE_RUNNING);
+			}
+		}
+
 
 	}
+	return wokenUp;
 
-	}
-	//return amount of workers removed from block queue
-	return amountWoken;*/
-	return 0;
 }
+void BuildBankerTables(int resDesc[], int work[], int finish[])
+{//work table and finish table
+	for(int i = 0; i < RES_AMOUNT;i++)
+	{
+		work[i] = resDesc[i];	
+	}	
+	for(int i = 0; i < TABLE_SIZE; i++)
+	{
+		finish[i] = 0;
+	}
+
+}
+void DeadlockHandler(struct PCB processTable[], int resourceDescriptor[], int allocTable[TABLE_SIZE][RES_AMOUNT], FILE* logger)
+{
+	//step 1
+	int work[RES_AMOUNT];
+	int finish[RES_AMOUNT];//0 == false, 1 == true
+	BuildBankerTables(resourceDescriptor, work, finish);
+
+	for(int i = 0; i < TABLE_SIZE;i++)
+	{
+
+		if(processTable[i].state == STATE_TERMINATED)
+		{
+			finish[i] = 1;
+		}
+		else
+		{
+			finish[i] = 0;
+		}
+
+	}
+	//step 2
+	for(int i = 0; i < TABLE_SIZE;i++)
+	{
+		if(finish[i] == 0)
+		{	
+			if(1 <= resourceDescriptor[processTable[i].lastResourceClaim])
+			{
+				//step 3
+				work[i] = work[i] + allocTable[i][processTable[i].lastResourceClaim];	
+				finish[i] = 1;
+			}
+		}	
+	}
+	int wasDeadlock = 0;
+	//step 4
+
+	for(int i = 0 ; i < TABLE_SIZE;i++)
+	{
+		if(finish[i] == 0)
+		{//detected deadlocked worker
+			if(processTable[i].pid != 0)
+			{
+				LogMessage(logger,"detected deadlock process %d. terminating it\n", processTable[i].pid);
+				kill(processTable[i].pid, SIGTERM);
+				processTable[i].state = STATE_TERMINATED;
+				processTable[i].forceTerm = 1;
+				wasDeadlock = 1;
+				break;
+			}
+		}
+	}
+	if(wasDeadlock == 1)
+	{//run alg again if deadlock via recursion
+		LogMessage(logger, "re running deadlock algorithm\n");
+		DeadlockHandler(processTable, resourceDescriptor, allocTable,logger);
+	}
+	printf("\n");
+}
+
 int LogMessage(FILE* logger, const char* format,...)
 {//logging to file
 	static int lineCount = 0;
@@ -463,20 +501,29 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* 
 	int timeToOutputNano = 0;
 	//calcualtes time to print table for timeToOutput varables
 	GenerateTimeToEvent(OsClock->seconds, OsClock->nanoseconds,HALF_SEC,0, &timeToOutputSec, &timeToOutputNano);
+	//time until we run detection alg, every 1 sec
+	int timeToDetectSec = 0;
+	int timeToDetectNano = 0;
+	GenerateTimeToEvent(OsClock->seconds, OsClock->nanoseconds, 0,1, &timeToDetectSec, &timeToDetectNano);
+
+	msgbuffer msg;
+	//data for end of program report	
+	int reqWait = 0;
+	int reqInst = 0;
+	int deadlockRuns = 0;
 
 	//keep looping until all workers (-n) have finished working
 	while(workersComplete != workerAmount)
 	{
 		//if thier are still workers left to launch
 		if(workersLeftToLaunch != 0)
-		{
-			//if thier are less workers in the system the the allowed simultanous value of amount of workers that can run at once
-			if(workersInSystem <= workerSimLimit)
-			{	
+		{//if thier are less workers in the system the the allowed simultanous value of amount of workers that can run at once
+
+			if(workersInSystem < workerSimLimit)
+			{ 	
 				//it timeInterval t has passed
 				if(CanEvent(OsClock->seconds, OsClock->nanoseconds, timeToLaunchNxtWorkerSec, timeToLaunchNxtWorkerNano) == 1)
-				{
-
+				{	
 					//laucnh new worker
 					WorkerLauncher(1, processTable, OsClock, logger);
 
@@ -495,78 +542,121 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int timeInterval, char* 
 		//if 1/2 second passed, print process table
 		if(CanEvent(OsClock->seconds,OsClock->nanoseconds, timeToOutputSec, timeToOutputNano) == 1)
 		{
-
-		//	PrintAllocationTable(processTable,allocationTable);
-		//	PrintResourceAvailability(resourceDescriptor);
-			PrintProcessTable(processTable, OsClock->seconds, OsClock->nanoseconds);
+			PrintAllocationTable(processTable,allocationTable,logger);
+			PrintResourceAvailability(resourceDescriptor,logger);
+			PrintProcessTable(processTable, OsClock->seconds, OsClock->nanoseconds,logger);
 			GenerateTimeToEvent(OsClock->seconds, OsClock->nanoseconds,HALF_SEC,0, &timeToOutputSec, &timeToOutputNano);
 		}
 
 
 		//send and recieve message to specific worker. returns amount of time worker ran and possibly amount of time it must be blocked for
-		msgbuffer msg =	RequestHandler(msqid);	
-		if(DidWorkerSendRequest(processTable, msg.workerID) == 1)
-		{
-		int canCommitAction = 1;
+		int gotMsg = RequestHandler(msqid,&msg);	
 
-		if(msg.action == 0)
-		{//if worker claims resource
+		if(gotMsg == 1 && DidWorkerSendRequest(processTable, msg.workerID) == 1)
+		{//if we got a worker message
 
-			UpdateLastResourceRequest(GetWorkerIndexFromProcessTable(processTable, msg.workerID), msg.resourceID,processTable);
-			//if the resource the worker wants is not available then canCommitAction becomes zero and os will not grant claim via update
-			//
-			canCommitAction = CanGrantResourceClaim(resourceDescriptor, msg.resourceID);
-			//
-		}
-		if(canCommitAction == 1)
-		{	
-		UpdateResourceDescriptor(resourceDescriptor, msg.resourceID, msg.action);
-		UpdateAllocationTable(allocationTable, msg.resourceID, GetWorkerIndexFromProcessTable(processTable, msg.workerID), msg.action);
-		}
-		if(canCommitAction == 0)
-		{
-		//block
-		}
+			int canCommitAction = 1;
 
-			PrintAllocationTable(processTable,allocationTable);
-			PrintResourceAvailability(resourceDescriptor);
-
-		}
-				//await that worker toterminate and get its pid
-				int workerFinishedId = AwaitWorker();
-
-				if(workerFinishedId != 0)
+			if(msg.action == 0)
+			{//if worker claims resource
+				LogMessage(logger, "Process %d requesting an action on %d at time %d:%d\n", msg.workerID,msg.resourceID, OsClock->seconds, OsClock->nanoseconds);
+				UpdateLastResourceRequest(GetWorkerIndexFromProcessTable(processTable, msg.workerID), msg.resourceID,processTable);
+				//if the resource the worker wants is not available then canCommitAction becomes zero and os will not grant claim via update
+				//
+				canCommitAction = CanGrantResourceClaim(resourceDescriptor, msg.resourceID);
+				//
+			}
+			if(canCommitAction == 1)
+			{//we can give resource to workeri
+				if(msg.action == 1)
 				{
-				workersComplete++;
+					LogMessage(logger, "Process %d released %d at time %d:%d\n", msg.workerID,msg.resourceID, OsClock->seconds, OsClock->nanoseconds);
 
-				UpdateLastResourceRequest(GetWorkerIndexFromProcessTable(processTable, workerFinishedId), -1, processTable);
+				}
+				else
+				{
+					LogMessage(logger, "Process %d granted %d at time %d:%d\n", msg.workerID,msg.resourceID, OsClock->seconds, OsClock->nanoseconds);
+				}			
+				UpdateResourceDescriptor(resourceDescriptor, msg.resourceID, msg.action);
+				UpdateAllocationTable(allocationTable, msg.resourceID, GetWorkerIndexFromProcessTable(processTable, msg.workerID), msg.action);
+
+				ResponseHandler(msqid, msg.workerID, &msg);	
+				reqInst++;
+			}
+			if(canCommitAction == 0)
+			{
+				LogMessage(logger, "Process %d blocked waiting for %d at time %d:%d\n", msg.workerID,msg.resourceID, OsClock->seconds, OsClock->nanoseconds);
+				//BLOCK WORKER
+				UpdateWorkerStateInProcessTable(processTable, msg.workerID, STATE_BLOCKED);
 
 
-				GetReleasedResources(resourceDescriptor, allocationTable, GetWorkerIndexFromProcessTable(processTable, workerFinishedId)); 
+			}
 
 
-				UpdateWorkerStateInProcessTable(processTable, workerFinishedId, STATE_TERMINATED);
+		}		
+		if(CanEvent(OsClock->seconds,OsClock->nanoseconds, timeToDetectSec, timeToDetectNano) == 1)
+		{//RUN DEADLOCK ALG	
+			LogMessage(logger, "Running deadlock algorithm\n");
+			deadlockRuns++;
+			DeadlockHandler(processTable, resourceDescriptor, allocationTable, logger);
+			GenerateTimeToEvent(OsClock->seconds, OsClock->nanoseconds, 0,1, &timeToDetectSec, &timeToDetectNano);
+		}	
+		//await that worker toterminate and get its pid
+		int workerFinishedId = AwaitWorker();
 
-				workersInSystem--;
-				}		
+		if(workerFinishedId != 0)
+		{
+			workersComplete++;
+
+			UpdateLastResourceRequest(GetWorkerIndexFromProcessTable(processTable, workerFinishedId), -1, processTable);
+
+			LogMessage(logger, "Process %d terminated naturally\n",workerFinishedId);
+			GetReleasedResources(resourceDescriptor, allocationTable, GetWorkerIndexFromProcessTable(processTable, workerFinishedId), logger); 
 
 
+			UpdateWorkerStateInProcessTable(processTable, workerFinishedId, STATE_TERMINATED);
+
+			workersInSystem--;
+
+		}		
+		//see if any processes can be awoken 
+		reqWait += WakeUpProcess(processTable, resourceDescriptor, allocationTable, msqid);	
 		RunSystemClock(OsClock, 500000);
 	}
 
-	Report();
+	Report(processTable, reqWait, reqInst, deadlockRuns);
 	DestructMsgQueue(msqid);
 	fclose(logger);
 }
+//ensures id from msgrcv is legit
+int DidWorkerSendRequest(struct PCB table[], int workerId)
+{
+	for(int i = 0; i < TABLE_SIZE;i++)
+	{
+		if(table[i].pid == workerId && workerId != 0)
+		{
+			return 1;
+		}
 
+	}
+	return 0;
+}
+//check if we passed a time for an event
 int CanEvent(int curSec,int curNano,int eventSecMark,int eventNanoMark)
 {
-	if(eventSecMark <= curSec && eventNanoMark <= curNano)
+	if(eventSecMark == curSec && eventNanoMark <= curNano)
 	{
 		return 1;
 	}
+	else if(eventSecMark < curSec)
+	{
+		return 1;	
+	}
+	else
+	{
+		return 0;
+	}
 
-	return 0;
 }
 
 void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,int timeIntervalSec, int* eventSec, int* eventNano)
@@ -627,7 +717,11 @@ int AwaitWorker()
 	//nonblocking await to check if any workers are done
 	pid = waitpid(-1, &stat, WNOHANG);
 
-
+	if(pid == -1)
+	{
+		perror("error occured awaiting worker\n");
+		exit(1);
+	}	
 	if(WIFEXITED(stat)) {
 
 		if(WEXITSTATUS(stat) != 0)
@@ -645,14 +739,17 @@ int GetWorkerIndexFromProcessTable(struct PCB table[], pid_t workerId)
 {//find the index (0 - 19) of worker with pid passed in params using table
 	for(int i = 0; i < TABLE_SIZE;i++)
 	{
+
 		if(table[i].pid == workerId)
 		{
+
 			return i;
 		}
 
 	}
-	printf("Invalid Worker Id\n");
-	exit(1);
+	printf("Invalid Worker Id: %d\n", workerId);
+	while(1)
+	{}
 }
 
 void AddWorkerToProcessTable(struct PCB table[], pid_t workerId, int secondsCreated, int nanosecondsCreated)
@@ -685,6 +782,7 @@ void UpdateWorkerStateInProcessTable(struct PCB table[], pid_t workerId, int sta
 		}
 	}
 }	
+//initalize
 void BuildProcessTable(struct PCB table[])
 { 
 	for(int i = 0; i < TABLE_SIZE;i++)
@@ -694,26 +792,90 @@ void BuildProcessTable(struct PCB table[])
 		table[i].startSeconds = 0;
 		table[i].startNano = 0;
 		table[i].lastResourceClaim = 0;
+		table[i].forceTerm = 0;
 	}	
 
 }	
 
-
-void PrintProcessTable(struct PCB processTable[],int curTimeSeconds, int curTimeNanoseconds)
-{ //print to console 
+//pirnt table
+void PrintProcessTable(struct PCB processTable[],int curTimeSeconds, int curTimeNanoseconds, FILE* logger)
+{ //printing 
 	int os_id = getpid();	
+	LogMessage(logger, "\nOSS PID:%d SysClockS: %d SysclockNano: %d\n",os_id, curTimeSeconds, curTimeNanoseconds);
+	LogMessage(logger, "Process Table:\n");
+	LogMessage(logger,"      State      PID       StartS       StartN         ResourceReq\n");
+
 	printf("\nOSS PID:%d SysClockS: %d SysclockNano: %d\n",os_id, curTimeSeconds, curTimeNanoseconds);
 	printf("Process Table:\n");
 	printf("      State      PID       StartS       StartN         ResourceReq\n");
 	for(int i = 0; i < TABLE_SIZE; i++)
 	{
-		printf("%d        %d          %d          %d         %d         %d \n", i, processTable[i].state, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano, processTable[i].lastResourceClaim);
-	}
-}
+		if(processTable[i].pid != 0)
+		{
+			LogMessage(logger, "%d        %d          %d          %d         %d         %d \n", i, processTable[i].state, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano, processTable[i].lastResourceClaim);
 
-void Report()
+			printf("%d        %d          %d          %d         %d         %d \n", i, processTable[i].state, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano, processTable[i].lastResourceClaim);
+
+		}
+	}	
+}
+//print allocation table
+void PrintAllocationTable(struct PCB processTable[],int allocationTable[TABLE_SIZE][RES_AMOUNT], FILE* logger)
+{
+	LogMessage(logger, "Allocation Table: \n");
+	printf("Allocation Table: \n");	
+	for(int i = 0;i < TABLE_SIZE;i++)
+	{
+		if(processTable[i].pid != 0)
+		{	
+			LogMessage(logger, "Worker Id: %d Resources: ",processTable[i].pid);
+			printf("Worker Id: %d Resources: ", processTable[i].pid);
+			for(int j = 0; j < RES_AMOUNT;j++)
+			{	
+				LogMessage(logger, "R%d: %d ",j, allocationTable[i][j]);
+				printf("R%d: %d ",j, allocationTable[i][j]);
+
+			}
+			LogMessage(logger, "\n");
+			printf("\n");
+
+		}
+	}
+
+}
+//print resource availbality
+void PrintResourceAvailability(int resourceDescriptor[], FILE* logger)
+{
+	LogMessage(logger, "Available Resources: \n");
+	printf("Available Resources: \n");
+	for(int i = 0; i < RES_AMOUNT;i++)
+	{
+		LogMessage(logger,"R%d: %d ", i, resourceDescriptor[i]);
+		printf("R%d: %d ", i, resourceDescriptor[i]);
+
+	}
+	LogMessage(logger,"\n");
+	printf("\n");
+}
+//print report
+void Report(struct PCB table[], int requestWait, int requestInstances,int runs)
 {
 	printf("\nOS REPORT:\n");
+	printf("Requests granted instantly: %d\n",requestInstances);
+	printf("Requests granted after wait %d\n",requestWait);
+	int countForced = 0;
+	for(int i = 0; i < TABLE_SIZE;i++)
+	{
+		if(table[i].forceTerm == 1)
+		{
+			countForced++;
+		}
+	}
+	printf("Processes terminated by deadlock handler %d\n",countForced);
+
+	printf("Processes terminated  naturally %d\n",TABLE_SIZE - countForced);
+
+	printf("deadlock handler runs %d\n", runs);
 
 }
 

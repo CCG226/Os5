@@ -16,12 +16,12 @@
 int main(int argc, char** argv)
 {
 	srand(getpid());
-
+	//tracks resources it owns
 	int workerResources[RES_AMOUNT];
 
 	for(int i = 0; i < RES_AMOUNT;i++)
 	{
-	workerResources[i] = 0;
+		workerResources[i] = 0;
 	}
 
 
@@ -80,148 +80,141 @@ void TaskHandler(int workerResources[])
 
 	int requestEventSec = 0;
 	int requestEventNano = 0;
-
+	//wait time till next os request to claim/release
 	int timeUntilNxtRequest = GenerateRequestTime();
 
 	GenerateTimeToEvent(Clock->seconds, Clock->nanoseconds, timeUntilNxtRequest,0, &requestEventSec, &requestEventNano);
-
+	//wait time till decide to terminate or not
 	GenerateTimeToEvent(Clock->seconds, Clock->nanoseconds, MAX_NANOSECOND / 4,0,&qtrSec, &qtrNano);
 
 	//while status is NOT 0, keep working
 	while(status != TERMINATING)
 	{
-	if(CanEvent(Clock->seconds, Clock->nanoseconds, requestEventSec, requestEventNano) == 1)
-	{
-		
-		int action = 1;
-	
-		int resourceId = 0;
-		//if worker does not have all the resources
-		if(AllResourcesClaimed(workerResources) != 1)
+		if(CanEvent(Clock->seconds, Clock->nanoseconds, requestEventSec, requestEventNano) == 1)
 		{
-		 action = ClaimOrReleaseResource();
-		}
+			//by defualt release
+			int action = 1;
 
-		if(action == 0)
+			int resourceId = 0;
+			//if worker does not have all the resources
+			if(AllResourcesClaimed(workerResources) != 1)
+			{//decide to claim or release
+				action = ClaimOrReleaseResource();
+			}
+
+			if(action == 0)
+			{
+				//claim
+				resourceId = ClaimResource(workerResources);
+			}
+			else{
+				//release
+				resourceId = ReleaseResource(workerResources);
+				if(resourceId == -1)
+				{//no resources to release so must claim
+
+					resourceId = ClaimResource(workerResources);
+					action = 0;
+				}
+
+			}
+			//send request to os to claim or release
+			SendRequest(msqid,&msg, resourceId, action);
+			//get response
+			int newResource = GetResourceResponse(msqid, &msg);
+
+
+			if(action == 0)
+			{
+				//if claimed resource then add it
+				AppendResource(workerResources, newResource);
+
+			}
+			timeUntilNxtRequest = GenerateRequestTime();	
+
+			GenerateTimeToEvent(Clock->seconds, Clock->nanoseconds, timeUntilNxtRequest,0, &requestEventSec, &requestEventNano);
+
+		}	
+
+		if(CanEvent(Clock->seconds, Clock->nanoseconds, qtrSec, qtrNano) == 1)
 		{
-		//claim
-		resourceId = ClaimResource(workerResources);
-		}
-		else{
-		//release
-		resourceId = ReleaseResource(workerResources);
-		if(resourceId == -1)
-		{//no resources to release so must claim
-		
-		resourceId = ClaimResource(workerResources);
-		action = 0;
-		}
+			GenerateTimeToEvent(Clock->seconds, Clock->nanoseconds,  MAX_NANOSECOND / 4,0,&qtrSec, &qtrNano);
 
-		}
-
-		SendRequest(msqid,&msg, resourceId, action);
-
-                int newResource = GetResourceResponse(msqid, &msg);
- 
-
-		if(action == 0)
-		{
-
-		AppendResource(workerResources, newResource);
-
-		}
-
-		timeUntilNxtRequest = GenerateRequestTime();	
-
-		GenerateTimeToEvent(Clock->seconds, Clock->nanoseconds, timeUntilNxtRequest,0, &requestEventSec, &requestEventNano);
-		printf("This worker %d's resources are now after action %d: ",getpid(), action);
-		for(int i = 0; i < RES_AMOUNT;i++)
-		{
-		printf("R%d: %d ", i, workerResources[i]);
-		}
-		printf("\n");
-	}	
-
-         if(CanEvent(Clock->seconds, Clock->nanoseconds, qtrSec, qtrNano) == 1)
-	 {
-	   GenerateTimeToEvent(Clock->seconds, Clock->nanoseconds,  MAX_NANOSECOND / 4,0,&qtrSec, &qtrNano);
-   		
-	   if(ShouldTerminate() == 1)
-	   {
-	  printf("worker %d is terminating\n", getpid());	   
-	     status = TERMINATING;	   
-	   }	   
-	 }	 
+			if(ShouldTerminate() == 1)
+			{
+				status = TERMINATING;	   
+			}	   
+		}	 
 	}
 
 	DisposeAccessToShm(Clock);
 
 }
 int AllResourcesClaimed(int resourceArray[])
-{
-int count = 0;
+{//if worker owns all resources in sys
+	int count = 0;
 
-int allFull = 0;
+	int allFull = 0;
 
-for(int i = 0; i < RES_AMOUNT;i++)
-{
- if(resourceArray[i] == 20)
- {
- count++;
- }
-}
+	for(int i = 0; i < RES_AMOUNT;i++)
+	{
+		if(resourceArray[i] == 20)
+		{
+			count++;
+		}
+	}
 
-if(count == RES_AMOUNT)
-{
-allFull = 1;
+	if(count == RES_AMOUNT)
+	{
+		allFull = 1;
 
-}
+	}
 
-return allFull;
+	return allFull;
 
 }
 int ClaimResource(int resourceArray[])
-{
-int foundResource = 0;	
-int res = -1;
-while(foundResource == 0)
-{
-res = (rand() % 10); 
-if(resourceArray[res] < 20)
-{
-foundResource = 1;
-}
-}
+{//claim random resource
+	int foundResource = 0;	
+	int res = -1;
+	while(foundResource == 0)
+	{
+		res = (rand() % 10); 
+		if(resourceArray[res] < 20)
+		{
+			foundResource = 1;
+		}
+	}
 
-return res;
+	return res;
 }
 int ReleaseResource(int resourceArray[])
-{
-for(int i = 0; i < RES_AMOUNT; i++)
-{
-if(resourceArray[i] > 0)
-{
-resourceArray[i]--;
+{//get rid of resource it owns
+	for(int i = 0; i < RES_AMOUNT; i++)
+	{
+		if(resourceArray[i] > 0)
+		{
+			resourceArray[i]--;
 
-return i;
-}
+			return i;
+		}
 
-}
-return -1;
+	}
+	return -1;//this means this worker has no resoruces to release
 }
 void AppendResource(int resourceArray[], int id)
-{
-for(int i = 0; i < RES_AMOUNT; i++)
-{
-if(i == id)
-{
-resourceArray[i]++;
-}
-}
+{///store resoruce
+	for(int i = 0; i < RES_AMOUNT; i++)
+	{
+		if(i == id)
+		{
+			resourceArray[i]++;
+		}
+	}
 }
 int GenerateRequestTime()
-{
- return (rand() % REQUEST_BOUND);
+{//when to msg os
+	return (rand() % REQUEST_BOUND);
 }
 
 void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,int timeIntervalSec, int* eventSec, int* eventNano)
@@ -239,22 +232,29 @@ void GenerateTimeToEvent(int currentSecond,int currentNano,int timeIntervalNano,
 }
 int CanEvent(int curSec,int curNano,int eventSecMark,int eventNanoMark)
 {
-if(eventSecMark <= curSec && eventNanoMark <= curNano)
-{
-return 1;
-}
+	if(eventSecMark == curSec && eventNanoMark <= curNano)
+	{
+		return 1;
+	}
+	else if(eventSecMark < curSec)
+	{
+		return 1;	
+	}
+	else
+	{
+		return 0;
+	}
 
-return 0;
 }
 int ShouldTerminate()
-{
- int option = (rand() % 100) + 1;
+{//when to terminate
+	int option = (rand() % 100) + 1;
 
- if(option <= 3)
+	if(option <= 15)
 	{
-	return 1;
+		return 1;
 	}
- return 0;
+	return 0;
 }
 
 int GetResourceResponse(int msqid, msgbuffer *msg)
@@ -264,8 +264,7 @@ int GetResourceResponse(int msqid, msgbuffer *msg)
 
 	if(msgrcv(msqid, msg, sizeof(msgbuffer), getpid(), 0) == -1)
 	{
-		printf("Failed To Get Message Request From Os. Worker: %d\n", getpid());
-		fprintf(stderr, "errno: %d\n", errno);
+		printf("Worker %d did recieve resource", getpid());
 		exit(1);
 	}
 	//return timeslice
@@ -277,7 +276,6 @@ void SendRequest(int msqid, msgbuffer *msg,int resourceId, int requestAction)
 	msg->action = requestAction;
 	msg->mtype = 1;
 	msg->workerID = getpid();
-printf("SENDING worker %d, resource %d, action %d", msg->workerID, msg->resourceID, requestAction);	
 	//send message back to os
 	if(msgsnd(msqid, msg, sizeof(msgbuffer)-sizeof(long),0) == -1) {
 		perror("Failed To Generate Response Message Back To Os.\n");
@@ -287,12 +285,12 @@ printf("SENDING worker %d, resource %d, action %d", msg->workerID, msg->resource
 }
 
 int ClaimOrReleaseResource()
-{
-int option = (rand() % 100) + 1;
+{//wdevide to claim or release
+	int option = (rand() % 100) + 1;
 
-if(option <= 25)
-{
-return 1;
-}
-return 0;
+	if(option <= 25)
+	{
+		return 1;
+	}
+	return 0;
 }
